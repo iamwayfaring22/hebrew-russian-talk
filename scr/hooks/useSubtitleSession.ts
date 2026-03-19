@@ -5,15 +5,18 @@ import type {
   STTProvider,
   STTStatus,
   TranscriptChunk,
-  SubtitleMessage,
   TranslationService,
 } from "@/services/stt/types";
 
-/**
- * useSubtitleSession — state manager for the subtitle pipeline.
- * Partial results: shown immediately WITHOUT translation (no UI freeze).
- * Final results: translated async, then displayed.
- */
+// Simple SubtitleMessage for internal use
+interface SubtitleMessage {
+  id: string;
+  original: string;
+  translated: string;
+  isFinal: boolean;
+  timestamp: number;
+}
+
 const STT_TO_PIPELINE: Record<STTStatus, PipelineStage> = {
   idle: "idle",
   requesting_permission: "requesting_permission",
@@ -40,17 +43,19 @@ export function useSubtitleSession(
   const [state, setState] = useState<SessionState>(INITIAL_STATE);
   const providerRef = useRef(sttProvider);
   const translationRef = useRef(translationService);
-  const partialMapRef = useRef<Map<string, SubtitleMessage>>(new Map());
-  // popup window ref
   const popupRef = useRef<Window | null>(null);
+
+  // Latest partial text - debounced, not written to state on every event
+  const partialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latestPartialRef = useRef<TranscriptChunk | null>(null);
 
   useEffect(() => { providerRef.current = sttProvider; }, [sttProvider]);
   useEffect(() => { translationRef.current = translationService; }, [translationService]);
 
-  // Send translation to popup window if open
-  const sendToPopup = useCallback((text: string, isFinal: boolean) => {
+  // Send TRANSLATED (Russian) text to popup window
+  const sendToPopup = useCallback((russianText: string) => {
     if (popupRef.current && !popupRef.current.closed) {
-      popupRef.current.postMessage({ type: "TRANSLATION", text, isFinal }, "*");
+      popupRef.current.postMessage({ type: "TRANSLATION", text: russianText, isFinal: true }, "*");
     }
   }, []);
 
@@ -63,7 +68,7 @@ export function useSubtitleSession(
     const w = window.open(
       "/popup",
       "translation_popup",
-      "width=480,height=280,top=50,left=50,resizable=yes,scrollbars=yes"
+      "width=500,height=300,top=50,left=50,resizable=yes,scrollbars=yes"
     );
     popupRef.current = w;
   }, []);
@@ -75,52 +80,65 @@ export function useSubtitleSession(
   const handleStatusChange = useCallback(
     (status: STTStatus) => {
       const stage = STT_TO_PIPELINE[status];
-      updatePipeline(stage);
-      if (status === "requesting_permission") {
-        setState((prev) => ({ ...prev, micPermission: "unknown" }));
-      } else if (status === "ready" || status === "listening") {
-        setState((prev) => ({ ...prev, micPermission: "granted" }));
-      }
+      setState((prev) => ({
+        ...prev,
+        pipelineStage: stage,
+        micPermission:
+          status === "requesting_permission" ? "unknown"
+          : status === "ready" || status === "listening" ? "granted"
+          : prev.micPermission,
+      }));
     },
-    [updatePipeline]
+    []
   );
 
-  // PARTIAL: show original immediately, NO translation fetch
+  // PARTIAL: debounce - only update state after 150ms quiet
   const handlePartialResult = useCallback(
     (chunk: TranscriptChunk) => {
-      updatePipeline("speech_detected");
-      const msg: SubtitleMessage = {
-        id: chunk.id,
-        original: chunk.text,
-        translated: "", // will be filled on final
-        isFinal: false,
-        timestamp: chunk.timestamp,
-      };
-      partialMapRef.current.set(chunk.id, msg);
-      setState((prev) => {
-        const existing = prev.messages.findIndex((m) => m.id === chunk.id);
-        if (existing >= 0) {
-          const updated = [...prev.messages];
-          updated[existing] = msg;
-          return { ...prev, messages: updated };
-        }
-        return { ...prev, messages: [...prev.messages, msg] };
-      });
+      latestPartialRef.current = chunk;
+      if (partialTimerRef.current) clearTimeout(partialTimerRef.current);
+      partialTimerRef.current = setTimeout(() => {
+        const c = latestPartialRef.current;
+        if (!c) return;
+        const msg: SubtitleMessage = {
+          id: c.id,
+          original: c.text,
+          translated: "",
+          isFinal: false,
+          timestamp: c.timestamp,
+        };
+        setState((prev) => {
+          const existing = prev.messages.findIndex((m) => m.id === c.id);
+          if (existing >= 0) {
+            const updated = [...prev.messages];
+            updated[existing] = msg;
+            return { ...prev, pipelineStage: "speech_detected", messages: updated };
+          }
+          return { ...prev, pipelineStage: "speech_detected", messages: [...prev.messages, msg] };
+        });
+      }, 150);
     },
-    [updatePipeline]
+    []
   );
 
-  // FINAL: translate once, update message
+  // FINAL: translate once, update message, send RUSSIAN to popup
   const handleFinalResult = useCallback(
     async (chunk: TranscriptChunk) => {
-      updatePipeline("translating");
+      if (partialTimerRef.current) {
+        clearTimeout(partialTimerRef.current);
+        partialTimerRef.current = null;
+      }
+      latestPartialRef.current = null;
+
+      setState((prev) => ({ ...prev, pipelineStage: "translating" }));
+
       let translated: string;
       try {
         translated = await translationRef.current.translate(chunk.text, "he", "ru");
       } catch {
         translated = "[ошибка перевода]";
       }
-      updatePipeline("translated");
+
       const msg: SubtitleMessage = {
         id: chunk.id,
         original: chunk.text,
@@ -128,24 +146,27 @@ export function useSubtitleSession(
         isFinal: true,
         timestamp: chunk.timestamp,
       };
-      partialMapRef.current.delete(chunk.id);
+
       setState((prev) => {
         const existing = prev.messages.findIndex((m) => m.id === chunk.id);
         if (existing >= 0) {
           const updated = [...prev.messages];
           updated[existing] = msg;
-          return { ...prev, messages: updated };
+          return { ...prev, pipelineStage: "translated", messages: updated };
         }
-        return { ...prev, messages: [...prev.messages, msg] };
+        return { ...prev, pipelineStage: "translated", messages: [...prev.messages, msg] };
       });
-      sendToPopup(translated, true);
+
+      // Send RUSSIAN translation to popup
+      sendToPopup(translated);
+
       setTimeout(() => {
         if (providerRef.current.getStatus() === "listening") {
-          updatePipeline("listening");
+          setState((prev) => ({ ...prev, pipelineStage: "listening" }));
         }
       }, 500);
     },
-    [updatePipeline, sendToPopup]
+    [sendToPopup]
   );
 
   const handleError = useCallback((error: Error) => {
@@ -172,7 +193,6 @@ export function useSubtitleSession(
       messages: [],
       startedAt: Date.now(),
     }));
-    partialMapRef.current.clear();
     try {
       await providerRef.current.initialize({
         onPartialResult: handlePartialResult,
@@ -193,26 +213,24 @@ export function useSubtitleSession(
   }, [handlePartialResult, handleFinalResult, handleError, handleStatusChange]);
 
   const stopSession = useCallback(async () => {
-    setState((prev) => ({ ...prev, phase: "stopping" }));
-    try {
-      await providerRef.current.stop();
-    } catch {
-      // ignore
+    if (partialTimerRef.current) {
+      clearTimeout(partialTimerRef.current);
+      partialTimerRef.current = null;
     }
-    setState((prev) => ({
-      ...prev,
-      phase: "stopped",
-      pipelineStage: "idle",
-    }));
+    setState((prev) => ({ ...prev, phase: "stopping" }));
+    try { await providerRef.current.stop(); } catch { /* ignore */ }
+    setState((prev) => ({ ...prev, phase: "stopped", pipelineStage: "idle" }));
   }, []);
 
   const clearMessages = useCallback(() => {
     setState((prev) => ({ ...prev, messages: [], startedAt: null }));
-    partialMapRef.current.clear();
   }, []);
 
   useEffect(() => {
-    return () => { providerRef.current.dispose(); };
+    return () => {
+      if (partialTimerRef.current) clearTimeout(partialTimerRef.current);
+      providerRef.current.dispose();
+    };
   }, []);
 
   return {
