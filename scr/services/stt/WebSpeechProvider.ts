@@ -1,15 +1,5 @@
 import type { STTProvider, STTProviderEvents, STTStatus, TranscriptChunk } from "./types";
 
-/**
- * WebSpeechProvider
- *
- * Strategy that works on BOTH desktop and Android Chrome:
- *   - continuous = false  (browser cuts each utterance into segments ~3-5s)
- *   - interimResults = true  (show live text while speaking)
- *   - onend -> immediately restart if not stopped (Google Translate pattern)
- *
- * This gives real-time output on Android without duplicate rows.
- */
 export class WebSpeechProvider implements STTProvider {
   readonly name = "web-speech";
 
@@ -19,6 +9,7 @@ export class WebSpeechProvider implements STTProvider {
   private recognition: any = null;
   private chunkCounter = 0;
   private _stopped = false;
+  private _lang = "he-IL"; // current recognition language
 
   async initialize(events: STTProviderEvents): Promise<void> {
     this.events = events;
@@ -48,12 +39,14 @@ export class WebSpeechProvider implements STTProvider {
     this.setStatus("ready");
   }
 
-  async start(): Promise<void> {
+  // lang: "he-IL" | "ru-RU" (or any BCP-47 tag)
+  async start(lang = "he-IL"): Promise<void> {
     if (!this.SpeechRecognitionClass) {
       this.events?.onError(new Error("Provider not initialized"));
       return;
     }
     this._stopped = false;
+    this._lang = lang;
     this.setStatus("listening");
     this._startRecognition();
   }
@@ -64,14 +57,12 @@ export class WebSpeechProvider implements STTProvider {
     const rec = new this.SpeechRecognitionClass();
     this.recognition = rec;
 
-    rec.lang = "he-IL";
-    rec.interimResults = true;   // show live partial text
-    rec.continuous = false;      // browser auto-segments: fires onend after each phrase
+    rec.lang = this._lang;
+    rec.interimResults = true;
+    rec.continuous = false;
     rec.maxAlternatives = 1;
 
-    // Track the partial id for this utterance - stable within one segment
     const partialId = `ws-p-${++this.chunkCounter}`;
-    let hasFinal = false;
 
     rec.onresult = (event: any) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -80,22 +71,20 @@ export class WebSpeechProvider implements STTProvider {
         if (!text) continue;
 
         if (result.isFinal) {
-          hasFinal = true;
           const chunk: TranscriptChunk = {
             id: `ws-f-${this.chunkCounter}`,
             text,
-            lang: "he",
+            lang: this._lang.split("-")[0], // "he" or "ru"
             isFinal: true,
             timestamp: Date.now(),
           };
           this.setStatus("final_result");
           this.events?.onFinalResult(chunk);
         } else {
-          // Partial: always use same partialId so hook updates in-place
           const chunk: TranscriptChunk = {
             id: partialId,
             text,
-            lang: "he",
+            lang: this._lang.split("-")[0],
             isFinal: false,
             timestamp: Date.now(),
           };
@@ -112,10 +101,8 @@ export class WebSpeechProvider implements STTProvider {
     };
 
     rec.onend = () => {
-      // Immediately restart for the next segment — Google Translate pattern
       if (!this._stopped) {
         this.setStatus("listening");
-        // Small delay avoids rapid-fire restart crashes on some Android versions
         setTimeout(() => {
           if (!this._stopped) this._startRecognition();
         }, 100);
@@ -124,33 +111,25 @@ export class WebSpeechProvider implements STTProvider {
 
     try {
       rec.start();
-    } catch {
-      // ignore already-started
-    }
+    } catch { /* ignore */ }
   }
 
   async stop(): Promise<void> {
     this._stopped = true;
     this.setStatus("ready");
-    try {
-      this.recognition?.stop();
-    } catch { /* ignore */ }
+    try { this.recognition?.stop(); } catch { /* ignore */ }
     this.recognition = null;
   }
 
   dispose(): void {
     this._stopped = true;
-    try {
-      this.recognition?.stop();
-    } catch { /* ignore */ }
+    try { this.recognition?.stop(); } catch { /* ignore */ }
     this.recognition = null;
     this.events = null;
     this.setStatus("idle");
   }
 
-  getStatus(): STTStatus {
-    return this.status;
-  }
+  getStatus(): STTStatus { return this.status; }
 
   private setStatus(s: STTStatus) {
     this.status = s;
