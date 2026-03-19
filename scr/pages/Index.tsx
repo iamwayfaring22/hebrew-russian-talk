@@ -100,7 +100,7 @@ export default function Index() {
 
         {finals.map((msg) => (
           <div key={msg.id} style={{ borderBottom: "1px solid #111", paddingBottom: 8 }}>
-            <div style={{ fontSize: 13, color: "#555", lineHeight: 1.4, wordBreak: "break-word" }}>
+            <div style={{ fontSize: 13, color: "#888", lineHeight: 1.4, wordBreak: "break-word" }}>
               {msg.original}
             </div>
             <div style={{ fontSize: 17, color: "#e0e0e0", lineHeight: 1.4, wordBreak: "break-word", marginTop: 2 }}>
@@ -111,7 +111,7 @@ export default function Index() {
 
         {partial && (
           <div>
-            <div style={{ fontSize: 13, color: "#444", lineHeight: 1.4, wordBreak: "break-word" }}>
+            <div style={{ fontSize: 13, color: "#777", lineHeight: 1.4, wordBreak: "break-word" }}>
               {partial.original}
             </div>
             <div style={{ fontSize: 20, color: "#666", lineHeight: 1.35 }}>
