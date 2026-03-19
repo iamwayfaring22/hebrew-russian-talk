@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { ChevronDown, ChevronUp, Bug } from "lucide-react";
-import { Switch } from "@/components/ui/switch";
 
 export interface DebugEvent {
   time: string;
@@ -23,8 +22,6 @@ export function DebugPanel({
 }: DebugPanelProps) {
   const [expanded, setExpanded] = useState(false);
 
-  const isMock = activeProvider === "mock";
-
   return (
     <div className="border-t border-border bg-muted/30">
       {/* Header */}
@@ -34,9 +31,9 @@ export function DebugPanel({
       >
         <span className="flex items-center gap-1.5">
           <Bug className="w-3 h-3" />
-          Debug · Провайдер:{" "}
+          Debug &middot; {"\u041f\u0440\u043e\u0432\u0430\u0439\u0434\u0435\u0440: "}
           <span className="font-semibold text-foreground">
-            {isMock ? "MockSTT" : "WebSpeech"}
+            {activeProvider === "mock" ? "MockSTT" : "WebSpeech"}
           </span>
         </span>
         {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
@@ -45,30 +42,34 @@ export function DebugPanel({
       {expanded && (
         <div className="px-4 pb-3 space-y-3">
           {/* Provider switch */}
-          <div className="flex items-center justify-between py-1">
-            <span className="text-xs text-muted-foreground">
-              {isMock ? "Mock (без микрофона)" : "WebSpeech (реальный микрофон)"}
-            </span>
-            <div className="flex items-center gap-2">
-              <span className={`text-[10px] ${isMock ? "text-primary font-semibold" : "text-muted-foreground"}`}>
-                Mock
-              </span>
-              <Switch
-                checked={!isMock}
-                onCheckedChange={(checked) =>
-                  onProviderChange(checked ? "web-speech" : "mock")
-                }
-                disabled={disabled}
-              />
-              <span className={`text-[10px] ${!isMock ? "text-primary font-semibold" : "text-muted-foreground"}`}>
-                WebSpeech
-              </span>
-            </div>
+          <div className="flex gap-2 py-1">
+            <button
+              onClick={() => { if (!disabled) onProviderChange("mock"); }}
+              disabled={disabled}
+              className={`px-3 py-1 rounded text-xs border transition-colors ${
+                activeProvider === "mock"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-transparent text-muted-foreground border-border hover:bg-muted"
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              Mock
+            </button>
+            <button
+              onClick={() => { if (!disabled) onProviderChange("web-speech"); }}
+              disabled={disabled}
+              className={`px-3 py-1 rounded text-xs border transition-colors ${
+                activeProvider === "web-speech"
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-transparent text-muted-foreground border-border hover:bg-muted"
+              } disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              WebSpeech
+            </button>
           </div>
 
           {disabled && (
             <p className="text-[10px] text-destructive">
-              Остановите сессию перед сменой провайдера
+              {"\u041e\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u0435 \u0441\u0435\u0441\u0441\u0438\u044e \u043f\u0435\u0440\u0435\u0434 \u0441\u043c\u0435\u043d\u043e\u0439 \u043f\u0440\u043e\u0432\u0430\u0439\u0434\u0435\u0440\u0430"}
             </p>
           )}
 
@@ -78,22 +79,13 @@ export function DebugPanel({
               STT Events ({events.length})
             </p>
             {events.length === 0 && (
-              <p className="text-[10px] text-muted-foreground/50">Нет событий</p>
+              <p className="text-[10px] text-muted-foreground/50">{"\u041d\u0435\u0442 \u0441\u043e\u0431\u044b\u0442\u0438\u0439"}</p>
             )}
             {events.map((e, i) => (
               <div key={i} className="flex gap-2 text-[10px] leading-relaxed font-mono">
                 <span className="text-muted-foreground/60 shrink-0">{e.time}</span>
-                <span
-                  className={
-                    e.event.includes("error")
-                      ? "text-destructive"
-                      : e.event.includes("result")
-                      ? "text-primary"
-                      : "text-foreground"
-                  }
-                >
-                  {e.event}
-                </span>
+                <span className="text-foreground">&nbsp;</span>
+                <span className="text-primary">{e.event}</span>
                 {e.detail && (
                   <span className="text-muted-foreground truncate">{e.detail}</span>
                 )}
