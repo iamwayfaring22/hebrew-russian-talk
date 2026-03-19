@@ -9,7 +9,7 @@ export default function Index() {
   const translationService = useRef(new MockTranslationService()).current;
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { state, startSession, stopSession, isRunning } = useSubtitleSession(
+  const { state, startSession, stopSession, isRunning, openPopup } = useSubtitleSession(
     providerRef.current,
     translationService
   );
@@ -46,21 +46,41 @@ export default function Index() {
       overflow: "hidden",
     }}>
 
+      {/* Status bar */}
       <div style={{
         flexShrink: 0,
         display: "flex",
         justifyContent: "space-between",
+        alignItems: "center",
         padding: "8px 16px",
         borderBottom: "1px solid #1a1a1a",
         fontSize: 12,
         color: "#444",
       }}>
-        <span>HE &rarr; RU</span>
-        <span style={{ color: isRunning ? "#4ade80" : "#333" }}>
-          {isRunning ? `\u25cf ${fmt(callSeconds)}` : "\u2014"}
-        </span>
+        <span>HE → RU</span>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <span style={{ color: isRunning ? "#4ade80" : "#333" }}>
+            {isRunning ? `● ${fmt(callSeconds)}` : "—"}
+          </span>
+          <button
+            onClick={openPopup}
+            title="Открыть попап-окно перевода"
+            style={{
+              background: "none",
+              border: "1px solid #333",
+              borderRadius: 6,
+              color: "#888",
+              cursor: "pointer",
+              fontSize: 12,
+              padding: "2px 8px",
+            }}
+          >
+            ↗ попап
+          </button>
+        </div>
       </div>
 
+      {/* Scrollable messages area */}
       <div
         ref={scrollRef}
         style={{
@@ -69,58 +89,33 @@ export default function Index() {
           padding: "12px 16px",
           display: "flex",
           flexDirection: "column",
-          gap: 16,
+          gap: 12,
         }}
       >
         {finals.length === 0 && !partial && (
-          <div style={{
-            flex: 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            color: "#2a2a2a",
-            fontSize: 15,
-            textAlign: "center",
-          }}>
-            {isRunning ? "\u0421\u043b\u0443\u0448\u0430\u044e\u2026" : "\u041d\u0430\u0436\u043c\u0438\u0442\u0435 \u0421\u0422\u0410\u0420\u0422"}
+          <div style={{ color: "#333", textAlign: "center", marginTop: 40, fontSize: 14 }}>
+            {isRunning ? "Слушаю…" : "Нажмите СТАРТ"}
           </div>
         )}
 
         {finals.map((msg) => (
-          <div key={msg.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-            <div style={{
-              fontSize: 15,
-              color: "#555",
-              direction: "rtl",
-              lineHeight: 1.4,
-              wordBreak: "break-word",
-            }}>
+          <div key={msg.id} style={{ borderBottom: "1px solid #111", paddingBottom: 8 }}>
+            <div style={{ fontSize: 13, color: "#555", lineHeight: 1.4, wordBreak: "break-word" }}>
               {msg.original}
             </div>
-            <div style={{
-              fontSize: 20,
-              color: "#f0f0f0",
-              lineHeight: 1.35,
-              wordBreak: "break-word",
-            }}>
-              {msg.translated || "\u2026"}
+            <div style={{ fontSize: 17, color: "#e0e0e0", lineHeight: 1.4, wordBreak: "break-word", marginTop: 2 }}>
+              {msg.translated || "…"}
             </div>
           </div>
         ))}
 
         {partial && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 3, opacity: 0.45 }}>
-            <div style={{
-              fontSize: 15,
-              color: "#555",
-              direction: "rtl",
-              lineHeight: 1.4,
-              wordBreak: "break-word",
-            }}>
+          <div>
+            <div style={{ fontSize: 13, color: "#444", lineHeight: 1.4, wordBreak: "break-word" }}>
               {partial.original}
             </div>
             <div style={{ fontSize: 20, color: "#666", lineHeight: 1.35 }}>
-              \u2026
+              &#x2026;
             </div>
           </div>
         )}
@@ -152,7 +147,7 @@ export default function Index() {
             letterSpacing: 1,
           }}
         >
-          {isRunning ? "\u23f9 \u0421\u0422\u041e\u041f" : "\u25b6 \u0421\u0422\u0410\u0420\u0422"}
+          {isRunning ? "⏹ СТОП" : "▶ СТАРТ"}
         </button>
       </div>
     </div>
