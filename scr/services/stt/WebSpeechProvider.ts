@@ -1,35 +1,41 @@
 import type { STTProvider, STTProviderEvents, STTStatus, TranscriptChunk } from "./types";
 
-// Detect Android Chrome — behaves differently with interimResults
-const isAndroid = /Android/i.test(navigator.userAgent);
-
+/**
+ * WebSpeechProvider
+ *
+ * Strategy that works on BOTH desktop and Android Chrome:
+ *   - continuous = false  (browser cuts each utterance into segments ~3-5s)
+ *   - interimResults = true  (show live text while speaking)
+ *   - onend -> immediately restart if not stopped (Google Translate pattern)
+ *
+ * This gives real-time output on Android without duplicate rows.
+ */
 export class WebSpeechProvider implements STTProvider {
   readonly name = "web-speech";
 
   private status: STTStatus = "idle";
   private events: STTProviderEvents | null = null;
+  private SpeechRecognitionClass: any = null;
   private recognition: any = null;
   private chunkCounter = 0;
   private _stopped = false;
-  // On Android we use a single stable partial id per session
-  private _partialId = "ws-partial";
 
   async initialize(events: STTProviderEvents): Promise<void> {
     this.events = events;
     this._stopped = false;
 
-    const SpeechRecognition =
+    const SR =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
 
-    if (!SpeechRecognition) {
+    if (!SR) {
       this.setStatus("error");
       events.onError(new Error("Web Speech API not supported in this browser"));
       return;
     }
+    this.SpeechRecognitionClass = SR;
 
     this.setStatus("requesting_permission");
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((t) => t.stop());
@@ -39,86 +45,87 @@ export class WebSpeechProvider implements STTProvider {
       return;
     }
 
-    this.recognition = new SpeechRecognition();
-    this.recognition.lang = "he-IL";
-    // On Android interim results cause duplicate rows — disable them
-    this.recognition.interimResults = !isAndroid;
-    this.recognition.continuous = true;
-    this.recognition.maxAlternatives = 1;
-
-    this.recognition.onresult = (event: any) => {
-      const i = event.resultIndex;
-      const result = event.results[i];
-      if (!result) return;
-
-      const text = result[0].transcript.trim();
-      if (!text) return;
-
-      if (result.isFinal) {
-        const id = `ws-${++this.chunkCounter}`;
-        const chunk: TranscriptChunk = {
-          id,
-          text,
-          lang: "he",
-          isFinal: true,
-          timestamp: Date.now(),
-        };
-        this.setStatus("final_result");
-        this.events?.onFinalResult(chunk);
-        setTimeout(() => {
-          if (!this._stopped && this.status !== "idle") {
-            this.setStatus("listening");
-          }
-        }, 200);
-      } else {
-        // Partial — always same id so the hook updates in-place
-        const chunk: TranscriptChunk = {
-          id: this._partialId,
-          text,
-          lang: "he",
-          isFinal: false,
-          timestamp: Date.now(),
-        };
-        this.setStatus("partial_result");
-        this.events?.onPartialResult(chunk);
-      }
-    };
-
-    this.recognition.onerror = (event: any) => {
-      if (event.error === "no-speech") {
-        this.events?.onError(new Error("no-speech: речь не обнаружена. Проверьте громкую связь."));
-        return;
-      }
-      if (event.error === "aborted") return;
-      this.setStatus("error");
-      this.events?.onError(new Error(`Speech recognition error: ${event.error}`));
-    };
-
-    this.recognition.onend = () => {
-      if (!this._stopped && this.status !== "idle" && this.status !== "error") {
-        try {
-          this.recognition?.start();
-        } catch {
-          // already started
-        }
-      }
-    };
-
     this.setStatus("ready");
   }
 
   async start(): Promise<void> {
-    if (!this.recognition) {
+    if (!this.SpeechRecognitionClass) {
       this.events?.onError(new Error("Provider not initialized"));
       return;
     }
     this._stopped = false;
-    this._partialId = `ws-partial-${Date.now()}`;
     this.setStatus("listening");
+    this._startRecognition();
+  }
+
+  private _startRecognition() {
+    if (this._stopped) return;
+
+    const rec = new this.SpeechRecognitionClass();
+    this.recognition = rec;
+
+    rec.lang = "he-IL";
+    rec.interimResults = true;   // show live partial text
+    rec.continuous = false;      // browser auto-segments: fires onend after each phrase
+    rec.maxAlternatives = 1;
+
+    // Track the partial id for this utterance - stable within one segment
+    const partialId = `ws-p-${++this.chunkCounter}`;
+    let hasFinal = false;
+
+    rec.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        const text = result[0].transcript.trim();
+        if (!text) continue;
+
+        if (result.isFinal) {
+          hasFinal = true;
+          const chunk: TranscriptChunk = {
+            id: `ws-f-${this.chunkCounter}`,
+            text,
+            lang: "he",
+            isFinal: true,
+            timestamp: Date.now(),
+          };
+          this.setStatus("final_result");
+          this.events?.onFinalResult(chunk);
+        } else {
+          // Partial: always use same partialId so hook updates in-place
+          const chunk: TranscriptChunk = {
+            id: partialId,
+            text,
+            lang: "he",
+            isFinal: false,
+            timestamp: Date.now(),
+          };
+          this.setStatus("partial_result");
+          this.events?.onPartialResult(chunk);
+        }
+      }
+    };
+
+    rec.onerror = (event: any) => {
+      if (event.error === "no-speech" || event.error === "aborted") return;
+      this.setStatus("error");
+      this.events?.onError(new Error(`Speech recognition error: ${event.error}`));
+    };
+
+    rec.onend = () => {
+      // Immediately restart for the next segment — Google Translate pattern
+      if (!this._stopped) {
+        this.setStatus("listening");
+        // Small delay avoids rapid-fire restart crashes on some Android versions
+        setTimeout(() => {
+          if (!this._stopped) this._startRecognition();
+        }, 100);
+      }
+    };
+
     try {
-      this.recognition.start();
+      rec.start();
     } catch {
-      // may already be started
+      // ignore already-started
     }
   }
 
@@ -127,18 +134,15 @@ export class WebSpeechProvider implements STTProvider {
     this.setStatus("ready");
     try {
       this.recognition?.stop();
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
+    this.recognition = null;
   }
 
   dispose(): void {
     this._stopped = true;
     try {
       this.recognition?.stop();
-    } catch {
-      // ignore
-    }
+    } catch { /* ignore */ }
     this.recognition = null;
     this.events = null;
     this.setStatus("idle");
