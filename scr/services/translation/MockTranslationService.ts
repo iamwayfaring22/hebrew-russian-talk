@@ -1,42 +1,43 @@
 import type { TranslationService } from "../stt/types";
 
 /**
- * Mock translation service — returns pre-defined Hebrew-to-Russian translations.
- * Used for local demo when no real translation API is connected.
+ * GoogleTranslationService — uses unofficial Google Translate API.
+ * No API key required. Works directly from browser.
  */
-
-const MOCK_TRANSLATIONS: Record<string, string> = {
-  "שלום, אני מתקשר בקשר לפגישה של מחר": "Здравствуйте, я звоню по поводу завтрашней встречи",
-  "כן, בוודאי. באיזו שעה נוח לך?": "Да, конечно. Во сколько вам удобно?",
-  "אני חושב שעשר בבוקר יהיה מושלם": "Думаю, десять утра будет идеально",
-  "מצוין. נפגש במשרד ברוטשילד?": "Отлично. Встречаемся в офисе на Ротшильд?",
-  "כן, בדיוק. אני אביא את כל המסמכים": "Да, именно. Я принесу все документы",
-};
-
 export class MockTranslationService implements TranslationService {
-  readonly name = "mock";
+  readonly name = "google";
+
+  private cache = new Map<string, string>();
 
   async translate(text: string, _from: string, _to: string): Promise<string> {
-    // Check exact match first
-    if (MOCK_TRANSLATIONS[text]) {
-      return MOCK_TRANSLATIONS[text];
-    }
+    if (!text.trim()) return "";
 
-    // Check partial match (for partial results)
-    for (const [key, value] of Object.entries(MOCK_TRANSLATIONS)) {
-      if (key.startsWith(text)) {
-        // Return proportional partial translation
-        const ratio = text.length / key.length;
-        return value.slice(0, Math.ceil(value.length * ratio)) + "…";
-      }
-    }
+    const cached = this.cache.get(text);
+    if (cached) return cached;
 
-    // Simulate delay for unknown text
-    await new Promise((r) => setTimeout(r, 200));
-    return `[перевод: ${text}]`;
+    try {
+      const url =
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=he&tl=ru&dt=t&q=` +
+        encodeURIComponent(text);
+
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+      const data = await res.json();
+      // Response format: [[["translated", "original", ...], ...], ...]
+      const translated: string = data[0]
+        .map((chunk: any[]) => chunk[0] ?? "")
+        .join("");
+
+      this.cache.set(text, translated);
+      return translated;
+    } catch (err) {
+      console.warn("Translation failed:", err);
+      return text; // fallback: show original
+    }
   }
 
   dispose(): void {
-    // nothing to clean up
+    this.cache.clear();
   }
 }
