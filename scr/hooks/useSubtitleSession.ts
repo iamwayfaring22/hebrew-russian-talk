@@ -66,7 +66,7 @@ export function useSubtitleSession(
       return;
     }
     const w = window.open(
-      "/popup",
+            "/#/popup",
       "translation_popup",
       "width=500,height=300,top=50,left=50,resizable=yes,scrollbars=yes"
     );
