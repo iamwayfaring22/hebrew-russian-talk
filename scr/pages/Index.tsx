@@ -1,23 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useSubtitleSession } from "@/hooks/useSubtitleSession";
-import { MockSTTProvider } from "@/services/stt/MockSTTProvider";
 import { WebSpeechProvider } from "@/services/stt/WebSpeechProvider";
 import { MockTranslationService } from "@/services/translation/MockTranslationService";
 import type { STTProvider } from "@/services/stt/types";
 
-type ProviderKey = "mock" | "web-speech";
-
-function createProvider(key: ProviderKey): STTProvider {
-  return key === "mock" ? new MockSTTProvider() : new WebSpeechProvider();
-}
-
 export default function Index() {
-  const [providerKey, setProviderKey] = useState<ProviderKey>("web-speech");
-  const [provider, setProvider] = useState<STTProvider>(() => createProvider("web-speech"));
+  const providerRef = useRef<STTProvider>(new WebSpeechProvider());
   const translationService = useRef(new MockTranslationService()).current;
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const { state, startSession, stopSession, openPopup, isRunning } = useSubtitleSession(
-    provider,
+  const { state, startSession, stopSession, isRunning } = useSubtitleSession(
+    providerRef.current,
     translationService
   );
 
@@ -26,38 +19,25 @@ export default function Index() {
   useEffect(() => {
     if (!isRunning) return;
     setCallSeconds(0);
-    const timer = setInterval(() => setCallSeconds((s) => s + 1), 1000);
-    return () => clearInterval(timer);
+    const t = setInterval(() => setCallSeconds((s) => s + 1), 1000);
+    return () => clearInterval(t);
   }, [isRunning]);
 
-  const formatTime = (s: number) =>
+  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [state.messages]);
+
+  const fmt = (s: number) =>
     `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
-  const handleToggle = () => {
-    if (isRunning) stopSession();
-    else startSession();
-  };
+  // Partial (last non-final message being typed)
+  const partial = [...state.messages].reverse().find((m) => !m.isFinal);
 
-  // Last final translated message
-  const lastFinal = [...state.messages].reverse().find((m) => m.isFinal);
-  // Latest partial (non-final)
-  const lastPartial = [...state.messages].reverse().find((m) => !m.isFinal);
-
-  const displayOriginal = lastPartial?.original || lastFinal?.original || "";
-  const displayTranslated = lastFinal?.translated || "";
-
-  const statusText =
-    !isRunning
-      ? "Нажмите «Старт» и говорите по-ивритски"
-      : state.pipelineStage === "requesting_permission"
-      ? "Запрос доступа к микрофону…"
-      : state.pipelineStage === "translating"
-      ? "Перевожу…"
-      : state.pipelineStage === "error"
-      ? "Ошибка"
-      : state.pipelineStage === "speech_detected"
-      ? "Распознаю…"
-      : "Слушаю…";
+  // Final messages only, for history list
+  const finals = state.messages.filter((m) => m.isFinal);
 
   return (
     <div style={{
@@ -67,140 +47,118 @@ export default function Index() {
       background: "#0a0a0a",
       color: "#f0f0f0",
       fontFamily: "system-ui, sans-serif",
-      userSelect: "none",
+      overflow: "hidden",
     }}>
 
-      {/* Timer + status bar */}
+      {/* Status bar */}
       <div style={{
+        flexShrink: 0,
         display: "flex",
         justifyContent: "space-between",
-        alignItems: "center",
-        padding: "10px 16px 6px",
-        borderBottom: "1px solid #1f1f1f",
-        fontSize: 13,
-        color: "#555",
-        flexShrink: 0,
+        padding: "8px 16px",
+        borderBottom: "1px solid #1a1a1a",
+        fontSize: 12,
+        color: "#444",
       }}>
         <span>HE → RU</span>
-        <span style={{ color: isRunning ? "#4ade80" : "#444" }}>
-          {isRunning ? `● ${formatTime(callSeconds)}` : "●●●"}
+        <span style={{ color: isRunning ? "#4ade80" : "#333" }}>
+          {isRunning ? `● ${fmt(callSeconds)}` : —}
         </span>
-        <span style={{ color: "#333", fontSize: 11 }}>{providerKey}</span>
       </div>
 
-      {/* MAIN TRANSLATION AREA */}
-      <div style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        justifyContent: "center",
-        alignItems: "center",
-        padding: "24px 20px",
-        gap: 20,
-        overflow: "hidden",
-      }}>
-        {/* Russian translation - big */}
-        <div style={{
-          fontSize: 34,
-          fontWeight: 600,
-          lineHeight: 1.3,
-          textAlign: "center",
-          color: displayTranslated ? "#f0f0f0" : "#2a2a2a",
-          wordBreak: "break-word",
-          minHeight: 90,
+      {/* Scrollable messages area */}
+      <div
+        ref={scrollRef}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "12px 16px",
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-        }}>
-          {displayTranslated || (
-            isRunning
-              ? <span style={{ color: "#333", fontSize: 22 }}>{statusText}</span>
-              : <span style={{ color: "#222", fontSize: 18 }}>Перевод появится здесь</span>
-          )}
-        </div>
-
-        {/* Hebrew original - smaller, below */}
-        {displayOriginal && (
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        {/* Placeholder when idle */}
+        {finals.length === 0 && !partial && (
           <div style={{
-            fontSize: 18,
-            color: "#444",
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#2a2a2a",
+            fontSize: 15,
             textAlign: "center",
-            direction: "rtl",
-            wordBreak: "break-word",
-            lineHeight: 1.4,
           }}>
-            {displayOriginal}
+            {isRunning ? "Слушаю…" : "Нажмите СТАРТ"}
+          </div>
+        )}
+
+        {/* Final messages */}
+        {finals.map((msg) => (
+          <div key={msg.id} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            {/* Hebrew original - small, gray, RTL */}
+            <div style={{
+              fontSize: 15,
+              color: "#555",
+              direction: "rtl",
+              lineHeight: 1.4,
+              wordBreak: "break-word",
+            }}>
+              {msg.original}
+            </div>
+            {/* Russian translation - bigger, white */}
+            <div style={{
+              fontSize: 20,
+              color: "#f0f0f0",
+              lineHeight: 1.35,
+              wordBreak: "break-word",
+            }}>
+              {msg.translated || "…"}
+            </div>
+          </div>
+        ))}
+
+        {/* Partial (currently speaking) */}
+        {partial && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 3, opacity: 0.5 }}>
+            <div style={{
+              fontSize: 15,
+              color: "#555",
+              direction: "rtl",
+              lineHeight: 1.4,
+              wordBreak: "break-word",
+            }}>
+              {partial.original}
+            </div>
+            <div style={{
+              fontSize: 20,
+              color: "#888",
+              lineHeight: 1.35,
+              fontStyle: "italic",
+            }}>
+              …
+            </div>
           </div>
         )}
 
         {/* Error */}
-        {state.error && (
-          <div style={{
-            fontSize: 12,
-            color: "#f87171",
-            textAlign: "center",
-            maxWidth: 300,
-          }}>
+        {state.error && state.error.includes("no-speech") === false && (
+          <div style={{ fontSize: 12, color: "#f87171", textAlign: "center" }}>
             {state.error}
           </div>
         )}
       </div>
 
-      {/* CONTROLS */}
+      {/* START/STOP button */}
       <div style={{
         flexShrink: 0,
-        padding: "12px 20px 20px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
+        padding: "12px 16px 20px",
         borderTop: "1px solid #1a1a1a",
       }}>
-        {/* Provider toggle */}
-        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-          {(["web-speech", "mock"] as ProviderKey[]).map((k) => (
-            <button
-              key={k}
-              disabled={isRunning}
-              onClick={() => {
-                if (isRunning) return;
-                provider.dispose();
-                const next = createProvider(k);
-                setProvider(next);
-                setProviderKey(k);
-              }}
-              style={{
-                fontSize: 11,
-                padding: "3px 10px",
-                borderRadius: 4,
-                border: providerKey === k ? "1px solid #4ade80" : "1px solid #333",
-                background: providerKey === k ? "#052e16" : "transparent",
-                color: providerKey === k ? "#4ade80" : "#555",
-                cursor: isRunning ? "default" : "pointer",
-              }}
-            >
-              {k === "web-speech" ? "WebSpeech" : "Mock"}
-            </button>
-          ))}
-          <button
-            onClick={openPopup}
-            style={{
-              fontSize: 11,
-              padding: "3px 10px",
-              borderRadius: 4,
-              border: "1px solid #333",
-              background: "transparent",
-              color: "#555",
-              cursor: "pointer",
-            }}
-          >
-            □ Окно
-          </button>
-        </div>
-
-        {/* BIG START/STOP BUTTON */}
         <button
-          onClick={handleToggle}
+          onClick={() => isRunning ? stopSession() : startSession()}
           style={{
+            width: "100%",
             fontSize: 20,
             fontWeight: 700,
             padding: "18px",
@@ -210,7 +168,6 @@ export default function Index() {
             color: isRunning ? "#fca5a5" : "#86efac",
             cursor: "pointer",
             letterSpacing: 1,
-            transition: "background 0.15s",
           }}
         >
           {isRunning ? "⏹ СТОП" : "▶ СТАРТ"}
