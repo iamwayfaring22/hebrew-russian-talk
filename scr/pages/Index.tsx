@@ -54,10 +54,11 @@ export default function Index() {
     };
   }
 
-  const { state, startSession, stopSession, isRunning } = useSubtitleSession(
+  const { state, startSession, stopSession, openPopup, isRunning } = useSubtitleSession(
     wrappedProvider.current!,
     translationService
   );
+
   const [callSeconds, setCallSeconds] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -108,7 +109,6 @@ export default function Index() {
     <div className="flex flex-col h-[100dvh] bg-background">
       <StatusBar confidence={confidence} callDuration={formatTime(callSeconds)} isOnline={true} />
       <TechStatus stage={techStage} isRunning={isRunning} />
-
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
         {!isRunning && state.messages.length === 0 && (
           <div className="flex items-center justify-center h-full">
@@ -162,6 +162,17 @@ export default function Index() {
           />
         ))}
         {isRunning && state.messages.length > 0 && <ListeningIndicator state={listenState} />}
+      </div>
+
+      {/* Popup window button */}
+      <div className="px-4 pb-1 flex justify-end">
+        <button
+          onClick={openPopup}
+          className="text-xs text-muted-foreground hover:text-foreground px-3 py-1 rounded border border-border hover:border-foreground/30 transition-colors"
+          title="Открыть перевод в отдельном окне"
+        >
+          □ Окно
+        </button>
       </div>
 
       <DebugPanel
