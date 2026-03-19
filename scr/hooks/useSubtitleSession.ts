@@ -8,7 +8,6 @@ import type {
   TranslationService,
 } from "@/services/stt/types";
 
-// Simple SubtitleMessage for internal use
 interface SubtitleMessage {
   id: string;
   original: string;
@@ -16,6 +15,9 @@ interface SubtitleMessage {
   isFinal: boolean;
   timestamp: number;
 }
+
+// Fixed ID for the one live partial line — always updated in-place
+const PARTIAL_ID = "__partial_live__";
 
 const STT_TO_PIPELINE: Record<STTStatus, PipelineStage> = {
   idle: "idle",
@@ -44,37 +46,29 @@ export function useSubtitleSession(
   const providerRef = useRef(sttProvider);
   const translationRef = useRef(translationService);
   const popupRef = useRef<Window | null>(null);
-
-  // Latest partial text - debounced, not written to state on every event
   const partialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latestPartialRef = useRef<TranscriptChunk | null>(null);
 
   useEffect(() => { providerRef.current = sttProvider; }, [sttProvider]);
   useEffect(() => { translationRef.current = translationService; }, [translationService]);
 
-  // Send TRANSLATED (Russian) text to popup window
   const sendToPopup = useCallback((russianText: string) => {
     if (popupRef.current && !popupRef.current.closed) {
       popupRef.current.postMessage({ type: "TRANSLATION", text: russianText, isFinal: true }, "*");
     }
   }, []);
 
-  // Open popup window
   const openPopup = useCallback(() => {
     if (popupRef.current && !popupRef.current.closed) {
       popupRef.current.focus();
       return;
     }
     const w = window.open(
-            "/#/popup",
+      "/#/popup",
       "translation_popup",
       "width=500,height=300,top=50,left=50,resizable=yes,scrollbars=yes"
     );
     popupRef.current = w;
-  }, []);
-
-  const updatePipeline = useCallback((stage: PipelineStage) => {
-    setState((prev) => ({ ...prev, pipelineStage: stage }));
   }, []);
 
   const handleStatusChange = useCallback(
@@ -92,7 +86,7 @@ export function useSubtitleSession(
     []
   );
 
-  // PARTIAL: debounce - only update state after 150ms quiet
+  // PARTIAL: always upsert the single PARTIAL_ID row — never create new rows
   const handlePartialResult = useCallback(
     (chunk: TranscriptChunk) => {
       latestPartialRef.current = chunk;
@@ -101,14 +95,14 @@ export function useSubtitleSession(
         const c = latestPartialRef.current;
         if (!c) return;
         const msg: SubtitleMessage = {
-          id: c.id,
+          id: PARTIAL_ID,
           original: c.text,
           translated: "",
           isFinal: false,
           timestamp: c.timestamp,
         };
         setState((prev) => {
-          const existing = prev.messages.findIndex((m) => m.id === c.id);
+          const existing = prev.messages.findIndex((m) => m.id === PARTIAL_ID);
           if (existing >= 0) {
             const updated = [...prev.messages];
             updated[existing] = msg;
@@ -116,12 +110,12 @@ export function useSubtitleSession(
           }
           return { ...prev, pipelineStage: "speech_detected", messages: [...prev.messages, msg] };
         });
-      }, 150);
+      }, 80);
     },
     []
   );
 
-  // FINAL: translate once, update message, send RUSSIAN to popup
+  // FINAL: remove partial row, translate, add final row
   const handleFinalResult = useCallback(
     async (chunk: TranscriptChunk) => {
       if (partialTimerRef.current) {
@@ -130,7 +124,12 @@ export function useSubtitleSession(
       }
       latestPartialRef.current = null;
 
-      setState((prev) => ({ ...prev, pipelineStage: "translating" }));
+      // Remove the live partial row immediately
+      setState((prev) => ({
+        ...prev,
+        pipelineStage: "translating",
+        messages: prev.messages.filter((m) => m.id !== PARTIAL_ID),
+      }));
 
       let translated: string;
       try {
@@ -147,17 +146,12 @@ export function useSubtitleSession(
         timestamp: chunk.timestamp,
       };
 
-      setState((prev) => {
-        const existing = prev.messages.findIndex((m) => m.id === chunk.id);
-        if (existing >= 0) {
-          const updated = [...prev.messages];
-          updated[existing] = msg;
-          return { ...prev, pipelineStage: "translated", messages: updated };
-        }
-        return { ...prev, pipelineStage: "translated", messages: [...prev.messages, msg] };
-      });
+      setState((prev) => ({
+        ...prev,
+        pipelineStage: "translated",
+        messages: [...prev.messages.filter((m) => m.id !== PARTIAL_ID), msg],
+      }));
 
-      // Send RUSSIAN translation to popup
       sendToPopup(translated);
 
       setTimeout(() => {
@@ -219,7 +213,7 @@ export function useSubtitleSession(
     }
     setState((prev) => ({ ...prev, phase: "stopping" }));
     try { await providerRef.current.stop(); } catch { /* ignore */ }
-    setState((prev) => ({ ...prev, phase: "stopped", pipelineStage: "idle" }));
+    setState((prev) => ({ ...prev, phase: "stopped", pipelineStage: "idle", messages: prev.messages.filter(m => m.isFinal) }));
   }, []);
 
   const clearMessages = useCallback(() => {
