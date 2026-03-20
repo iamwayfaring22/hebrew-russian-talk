@@ -14,7 +14,6 @@ export default function Index() {
     useSubtitleSession(providerRef.current, translationService);
 
   const [callSeconds, setCallSeconds] = useState(0);
-  // Selected direction (before session starts or after stop)
   const [selectedDir, setSelectedDir] = useState<TranslationDirection>("he->ru");
 
   useEffect(() => {
@@ -39,13 +38,12 @@ export default function Index() {
   const activeDir = isRunning ? direction : selectedDir;
   const isHeRu = activeDir === "he->ru";
 
-  // Label helpers
   const dirLabel = isHeRu ? "ОН (ивр → рус)" : "Я (рус → ивр)";
   const srcLabel = isHeRu ? "иврит" : "русский";
   const dstLabel = isHeRu ? "русский" : "иврит";
 
   const handleToggleDir = () => {
-    if (isRunning) return; // can't switch while running
+    if (isRunning) return;
     setSelectedDir((d) => (d === "he->ru" ? "ru->he" : "he->ru"));
   };
 
@@ -57,49 +55,24 @@ export default function Index() {
     }
   };
 
-  // Color accent per direction
   const accent = isHeRu ? "#4ade80" : "#60a5fa";
-  const btnBg = isRunning
-    ? "#7f1d1d"
-    : isHeRu ? "#14532d" : "#1e3a5f";
-  const btnColor = isRunning
-    ? "#fca5a5"
-    : isHeRu ? "#86efac" : "#93c5fd";
+  const btnBg = isRunning ? "#7f1d1d" : isHeRu ? "#14532d" : "#1e3a5f";
+  const btnColor = isRunning ? "#fca5a5" : isHeRu ? "#86efac" : "#93c5fd";
 
   return (
-    <div style={{
-      display: "flex", flexDirection: "column", height: "100dvh",
-      background: "#0a0a0a", color: "#f0f0f0",
-      fontFamily: "system-ui, sans-serif", overflow: "hidden",
-    }}>
-
+    <div style={{ background: "#000", minHeight: "100dvh", display: "flex", flexDirection: "column", fontFamily: "system-ui, sans-serif", color: "#fff" }}>
       {/* Status bar */}
-      <div style={{
-        flexShrink: 0, display: "flex", justifyContent: "space-between",
-        alignItems: "center", padding: "8px 16px",
-        borderBottom: "1px solid #1a1a1a", fontSize: 12, color: "#444",
-      }}>
-        <span style={{ color: accent, fontWeight: 600 }}>{dirLabel}</span>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ color: isRunning ? accent : "#333" }}>
-            {isRunning ? `● ${fmt(callSeconds)}` : "—"}
-          </span>
-          <button onClick={openPopup} style={{
-            background: "none", border: "1px solid #333", borderRadius: 6,
-            color: "#888", cursor: "pointer", fontSize: 12, padding: "2px 8px",
-          }}>
-            ↗ попап
-          </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px", background: "#0a0a0a", borderBottom: "1px solid #1a1a1a" }}>
+        <span style={{ color: accent, fontSize: 13, fontWeight: 600 }}>{dirLabel}</span>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <span style={{ color: "#555", fontSize: 12 }}>{isRunning ? `● ${fmt(callSeconds)}` : "—"}</span>
+          <button onClick={openPopup} style={{ background: "none", border: "1px solid #333", color: "#888", fontSize: 11, padding: "3px 8px", borderRadius: 4, cursor: "pointer" }}>↗ попап</button>
         </div>
       </div>
 
-      {/* Mode toggle — only when stopped */}
+      {/* Mode toggle */}
       {!isRunning && (
-        <div style={{
-          flexShrink: 0, display: "flex", gap: 0,
-          margin: "10px 16px 0", borderRadius: 10, overflow: "hidden",
-          border: "1px solid #222",
-        }}>
+        <div style={{ display: "flex", background: "#111", borderBottom: "1px solid #1a1a1a" }}>
           {(["he->ru", "ru->he"] as TranslationDirection[]).map((d) => (
             <button
               key={d}
@@ -117,64 +90,48 @@ export default function Index() {
         </div>
       )}
 
-      {/* Scrollable messages */}
-      <div ref={scrollRef} style={{
-        flex: 1, overflowY: "auto", padding: "12px 16px",
-        display: "flex", flexDirection: "column", gap: 12,
-      }}>
+      {/* Messages */}
+      <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: 10 }}>
         {finals.length === 0 && !partial && (
-          <div style={{ color: "#333", textAlign: "center", marginTop: 40, fontSize: 14 }}>
-            {isRunning
-              ? `Слушаю ${srcLabel}…`
-              : `Выберите режим и нажмите СТАРТ`
-            }
+          <div style={{ color: "#444", textAlign: "center", marginTop: 40, fontSize: 14 }}>
+            {isRunning ? `Слушаю ${srcLabel}…` : `Выберите режим и нажмите СТАРТ`}
           </div>
         )}
 
         {finals.map((msg: any) => (
-          <div key={msg.id} style={{ borderBottom: "1px solid #111", paddingBottom: 8 }}>
-            <div style={{ fontSize: 13, color: "#888", lineHeight: 1.4, wordBreak: "break-word" }}>
+          <div key={msg.id} style={{ background: "#0d0d0d", borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ color: msg.direction === "he->ru" ? "#a3e635" : "#93c5fd", fontSize: 15, fontWeight: 500, direction: msg.direction === "he->ru" ? "rtl" : "ltr", textAlign: msg.direction === "he->ru" ? "right" : "left" }}>
               {msg.original}
             </div>
-            <div style={{
-              fontSize: 17, lineHeight: 1.4, wordBreak: "break-word", marginTop: 2,
-              color: msg.direction === "he->ru" ? "#e0e0e0" : "#93c5fd",
-            }}>
+            <div style={{ color: msg.direction === "he->ru" ? "#e0e0e0" : "#93c5fd", fontSize: 14, marginTop: 4 }}>
               {msg.translated || "…"}
             </div>
           </div>
         ))}
 
         {partial && (
-          <div>
-            <div style={{ fontSize: 13, color: "#777", lineHeight: 1.4, wordBreak: "break-word" }}>
+          <div style={{ background: "#111", borderRadius: 8, padding: "10px 12px", borderLeft: `3px solid ${accent}`, opacity: 0.85 }}>
+            <div style={{ color: partial.direction === "he->ru" ? "#a3e635" : "#93c5fd", fontSize: 15, direction: partial.direction === "he->ru" ? "rtl" : "ltr", textAlign: partial.direction === "he->ru" ? "right" : "left" }}>
               {partial.original}
             </div>
-            <div style={{ fontSize: 20, color: "#666", lineHeight: 1.35 }}>…</div>
+            <div style={{ color: "#888", fontSize: 14, marginTop: 4 }}>
+              {partial.translated || "…"}
+            </div>
           </div>
         )}
 
         {state.error && !state.error.includes("no-speech") && (
-          <div style={{ fontSize: 12, color: "#f87171", textAlign: "center" }}>
-            {state.error}
-          </div>
+          <div style={{ color: "#f87171", fontSize: 12, textAlign: "center" }}>{state.error}</div>
         )}
       </div>
 
-      {/* Start/Stop button */}
-      <div style={{ flexShrink: 0, padding: "12px 16px 20px", borderTop: "1px solid #1a1a1a" }}>
-        <button
-          onClick={handleStart}
-          style={{
-            width: "100%", fontSize: 20, fontWeight: 700, padding: "18px",
-            borderRadius: 12, border: "none",
-            background: btnBg, color: btnColor,
-            cursor: "pointer", letterSpacing: 1,
-          }}
-        >
-          {isRunning ? `⏹ СТОП` : `▶ СТАРТ`}
-        </button>
-      </div>
+      {/* Start/Stop */}
+      <button
+        onClick={handleStart}
+        style={{ background: btnBg, color: btnColor, border: "none", padding: "18px", fontSize: 16, fontWeight: 700, cursor: "pointer", letterSpacing: 1 }}
+      >
+        {isRunning ? `⏹ СТОП` : `▶ СТАРТ`}
+      </button>
     </div>
   );
 }
