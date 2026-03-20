@@ -49,9 +49,9 @@ export function useSubtitleSession(
   const providerRef = useRef(sttProvider);
   const translationRef = useRef(translationService);
   const popupRef = useRef<Window | null>(null);
-  const partialTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const latestPartialRef = useRef<TranscriptChunk | null>(null);
   const directionRef = useRef<TranslationDirection>("he->ru");
+  // track the text we last kicked off a translation for (to avoid stale updates)
+  const partialTranslatingRef = useRef<string>("");
 
   useEffect(() => { providerRef.current = sttProvider; }, [sttProvider]);
   useEffect(() => { translationRef.current = translationService; }, [translationService]);
@@ -86,45 +86,46 @@ export function useSubtitleSession(
   }, []);
 
   const handlePartialResult = useCallback((chunk: TranscriptChunk) => {
-    latestPartialRef.current = chunk;
-    if (partialTimerRef.current) clearTimeout(partialTimerRef.current);
-    partialTimerRef.current = setTimeout(async () => {
-      const c = latestPartialRef.current;
-      if (!c) return;
-      const dir = directionRef.current;
-      const [fromLang, toLang] = dir === "he->ru" ? ["he", "ru"] : ["ru", "he"];
-      let translated = "";
-      try {
-        translated = await translationRef.current.translate(c.text, fromLang, toLang);
-      } catch { translated = ""; }
-      // Only update if this partial is still the latest
-      if (latestPartialRef.current !== c) return;
-      const msg: SubtitleMessage = {
-        id: PARTIAL_ID,
-        original: c.text,
-        translated,
-        isFinal: false,
-        timestamp: c.timestamp,
-        direction: dir,
-      };
+    const dir = directionRef.current;
+    const text = chunk.text;
+
+    // 1. Show original text immediately — no waiting
+    const msgOriginal: SubtitleMessage = {
+      id: PARTIAL_ID,
+      original: text,
+      translated: "",
+      isFinal: false,
+      timestamp: chunk.timestamp,
+      direction: dir,
+    };
+    setState((prev) => {
+      const existing = prev.messages.findIndex((m) => m.id === PARTIAL_ID);
+      if (existing >= 0) {
+        const updated = [...prev.messages];
+        updated[existing] = msgOriginal;
+        return { ...prev, pipelineStage: "speech_detected", messages: updated };
+      }
+      return { ...prev, pipelineStage: "speech_detected", messages: [...prev.messages, msgOriginal] };
+    });
+
+    // 2. Fire translation in background — update translated field when ready
+    partialTranslatingRef.current = text;
+    const [fromLang, toLang] = dir === "he->ru" ? ["he", "ru"] : ["ru", "he"];
+    translationRef.current.translate(text, fromLang, toLang).then((translated) => {
+      // Only apply if this text is still current
+      if (partialTranslatingRef.current !== text) return;
       setState((prev) => {
-        const existing = prev.messages.findIndex((m) => m.id === PARTIAL_ID);
-        if (existing >= 0) {
-          const updated = [...prev.messages];
-          updated[existing] = msg;
-          return { ...prev, pipelineStage: "speech_detected", messages: updated };
-        }
-        return { ...prev, pipelineStage: "speech_detected", messages: [...prev.messages, msg] };
+        const idx = prev.messages.findIndex((m) => m.id === PARTIAL_ID);
+        if (idx < 0) return prev;
+        const updated = [...prev.messages];
+        updated[idx] = { ...updated[idx], translated };
+        return { ...prev, messages: updated };
       });
-    }, 300);
+    }).catch(() => { /* ignore */ });
   }, []);
 
   const handleFinalResult = useCallback(async (chunk: TranscriptChunk) => {
-    if (partialTimerRef.current) {
-      clearTimeout(partialTimerRef.current);
-      partialTimerRef.current = null;
-    }
-    latestPartialRef.current = null;
+    partialTranslatingRef.current = "";
     setState((prev) => ({
       ...prev,
       pipelineStage: "translating",
@@ -181,6 +182,7 @@ export function useSubtitleSession(
     const activeDir = dir ?? directionRef.current;
     directionRef.current = activeDir;
     setDirection(activeDir);
+    partialTranslatingRef.current = "";
     setState((prev) => ({
       ...prev,
       phase: "starting",
@@ -208,10 +210,7 @@ export function useSubtitleSession(
   }, [handlePartialResult, handleFinalResult, handleError, handleStatusChange]);
 
   const stopSession = useCallback(async () => {
-    if (partialTimerRef.current) {
-      clearTimeout(partialTimerRef.current);
-      partialTimerRef.current = null;
-    }
+    partialTranslatingRef.current = "";
     setState((prev) => ({ ...prev, phase: "stopping" }));
     try { await providerRef.current.stop(); } catch { /* ignore */ }
     setState((prev) => ({
@@ -228,7 +227,6 @@ export function useSubtitleSession(
 
   useEffect(() => {
     return () => {
-      if (partialTimerRef.current) clearTimeout(partialTimerRef.current);
       providerRef.current.dispose();
     };
   }, []);
