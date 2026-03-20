@@ -1,7 +1,7 @@
 import type { TranslationService } from "../stt/types";
 
 /**
- * GoogleTranslationService — uses unofficial Google Translate API.
+ * GoogleTranslationService - uses unofficial Google Translate API.
  * No API key required. Works directly from browser.
  */
 export class MockTranslationService implements TranslationService {
@@ -12,12 +12,13 @@ export class MockTranslationService implements TranslationService {
   async translate(text: string, _from: string, _to: string): Promise<string> {
     if (!text.trim()) return "";
 
-    const cached = this.cache.get(text);
+    const cacheKey = `${_from}|${_to}|${text}`;
+    const cached = this.cache.get(cacheKey);
     if (cached) return cached;
 
     try {
       const url =
-        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=he&tl=ru&dt=t&q=` +
+        `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${_from}&tl=${_to}&dt=t&q=` +
         encodeURIComponent(text);
 
       const res = await fetch(url);
@@ -29,7 +30,7 @@ export class MockTranslationService implements TranslationService {
         .map((chunk: any[]) => chunk[0] ?? "")
         .join("");
 
-      this.cache.set(text, translated);
+      this.cache.set(cacheKey, translated);
       return translated;
     } catch (err) {
       console.warn("Translation failed:", err);
