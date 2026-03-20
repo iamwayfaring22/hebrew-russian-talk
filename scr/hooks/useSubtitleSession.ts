@@ -67,8 +67,7 @@ export function useSubtitleSession(
       popupRef.current.focus();
       return;
     }
-    const w = window.open("/#/popup", "translation_popup",
-      "width=500,height=300,top=50,left=50,resizable=yes,scrollbars=yes");
+    const w = window.open("/#/popup", "translation_popup", "width=500,height=300,top=50,left=50,resizable=yes,scrollbars=yes");
     popupRef.current = w;
   }, []);
 
@@ -78,25 +77,35 @@ export function useSubtitleSession(
       ...prev,
       pipelineStage: stage,
       micPermission:
-        status === "requesting_permission" ? "unknown"
-        : status === "ready" || status === "listening" ? "granted"
-        : prev.micPermission,
+        status === "requesting_permission"
+          ? "unknown"
+          : status === "ready" || status === "listening"
+          ? "granted"
+          : prev.micPermission,
     }));
   }, []);
 
   const handlePartialResult = useCallback((chunk: TranscriptChunk) => {
     latestPartialRef.current = chunk;
     if (partialTimerRef.current) clearTimeout(partialTimerRef.current);
-    partialTimerRef.current = setTimeout(() => {
+    partialTimerRef.current = setTimeout(async () => {
       const c = latestPartialRef.current;
       if (!c) return;
-      const msg = {
+      const dir = directionRef.current;
+      const [fromLang, toLang] = dir === "he->ru" ? ["he", "ru"] : ["ru", "he"];
+      let translated = "";
+      try {
+        translated = await translationRef.current.translate(c.text, fromLang, toLang);
+      } catch { translated = ""; }
+      // Only update if this partial is still the latest
+      if (latestPartialRef.current !== c) return;
+      const msg: SubtitleMessage = {
         id: PARTIAL_ID,
         original: c.text,
-        translated: "",
+        translated,
         isFinal: false,
         timestamp: c.timestamp,
-        direction: directionRef.current,
+        direction: dir,
       };
       setState((prev) => {
         const existing = prev.messages.findIndex((m) => m.id === PARTIAL_ID);
@@ -107,30 +116,29 @@ export function useSubtitleSession(
         }
         return { ...prev, pipelineStage: "speech_detected", messages: [...prev.messages, msg] };
       });
-    }, 80);
+    }, 300);
   }, []);
 
   const handleFinalResult = useCallback(async (chunk: TranscriptChunk) => {
-    if (partialTimerRef.current) { clearTimeout(partialTimerRef.current); partialTimerRef.current = null; }
+    if (partialTimerRef.current) {
+      clearTimeout(partialTimerRef.current);
+      partialTimerRef.current = null;
+    }
     latestPartialRef.current = null;
-
     setState((prev) => ({
       ...prev,
       pipelineStage: "translating",
       messages: prev.messages.filter((m) => m.id !== PARTIAL_ID),
     }));
-
     const dir = directionRef.current;
     const [fromLang, toLang] = dir === "he->ru" ? ["he", "ru"] : ["ru", "he"];
-
     let translated: string;
     try {
       translated = await translationRef.current.translate(chunk.text, fromLang, toLang);
     } catch {
       translated = "[ошибка перевода]";
     }
-
-    const msg = {
+    const msg: SubtitleMessage = {
       id: chunk.id,
       original: chunk.text,
       translated,
@@ -138,15 +146,12 @@ export function useSubtitleSession(
       timestamp: chunk.timestamp,
       direction: dir,
     };
-
     setState((prev) => ({
       ...prev,
       pipelineStage: "translated",
       messages: [...prev.messages.filter((m) => m.id !== PARTIAL_ID), msg],
     }));
-
     sendToPopup(translated);
-
     setTimeout(() => {
       if (providerRef.current.getStatus() === "listening") {
         setState((prev) => ({ ...prev, pipelineStage: "listening" }));
@@ -177,7 +182,11 @@ export function useSubtitleSession(
     directionRef.current = activeDir;
     setDirection(activeDir);
     setState((prev) => ({
-      ...prev, phase: "starting", error: null, messages: [], startedAt: Date.now(),
+      ...prev,
+      phase: "starting",
+      error: null,
+      messages: [],
+      startedAt: Date.now(),
     }));
     try {
       await providerRef.current.initialize({
@@ -190,18 +199,25 @@ export function useSubtitleSession(
       setState((prev) => ({ ...prev, phase: "running" }));
     } catch (err) {
       setState((prev) => ({
-        ...prev, phase: "stopped", pipelineStage: "error",
+        ...prev,
+        phase: "stopped",
+        pipelineStage: "error",
         error: err instanceof Error ? err.message : "Unknown error",
       }));
     }
   }, [handlePartialResult, handleFinalResult, handleError, handleStatusChange]);
 
   const stopSession = useCallback(async () => {
-    if (partialTimerRef.current) { clearTimeout(partialTimerRef.current); partialTimerRef.current = null; }
+    if (partialTimerRef.current) {
+      clearTimeout(partialTimerRef.current);
+      partialTimerRef.current = null;
+    }
     setState((prev) => ({ ...prev, phase: "stopping" }));
     try { await providerRef.current.stop(); } catch { /* ignore */ }
     setState((prev) => ({
-      ...prev, phase: "stopped", pipelineStage: "idle",
+      ...prev,
+      phase: "stopped",
+      pipelineStage: "idle",
       messages: prev.messages.filter((m) => m.isFinal),
     }));
   }, []);
